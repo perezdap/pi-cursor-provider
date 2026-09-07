@@ -1,0 +1,37 @@
+{
+  "name": "pi-cursor-provider",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Experimental Cursor SDK model provider for Pi, with Pi-owned tool execution",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/bridge.test.ts test/provider.test.ts",
+    "verify": "npm run check && npm test"
+  },
+  "dependencies": {
+    "@cursor/sdk": "1.0.31"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1",
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3"
+  }
+}

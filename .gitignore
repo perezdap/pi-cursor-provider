@@ -1,0 +1,6 @@
+node_modules/
+.dowse_index/
+.env
+.env.*
+!.env.example
+coverage/
