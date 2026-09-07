@@ -52,10 +52,13 @@ export async function runCursorTurn(runtime: CursorRuntime, context: Context, op
   options.signal.throwIfAborted();
   const prompt = serializeHistory(context);
   const cleanupTimeout = options.cleanupTimeoutMs ?? 10_000;
+  // Cleanup performs up to three sequential bounded waits: run cancellation,
+  // agent disposal, and directory removal. Budget one cleanupTimeout for each.
+  const cleanupBudgetMs = cleanupTimeout * 3;
   const root = await mkdtemp(join(tmpdir(), "pi-cursor-"));
   const workspace = join(root, "workspace");
   const calls: ToolCall[] = [];
-  let accepting = true;
+  let capturing = true;
   let releaseTools!: () => void;
   const toolRelease = new Promise<void>((resolve) => { releaseTools = resolve; });
   let requestHandoff!: () => void;
@@ -76,7 +79,7 @@ export async function runCursorTurn(runtime: CursorRuntime, context: Context, op
         description: `Pi tool: ${tool.name}\n${tool.description}`,
         inputSchema: JSON.parse(JSON.stringify(tool.parameters)),
         async execute(args): Promise<SDKCustomToolResult> {
-          if (accepting && !options.signal.aborted) {
+          if (capturing && !options.signal.aborted) {
             // These callbacks only capture requests. Never call a Pi tool here.
             calls.push({
               type: "toolCall", id: `cursor_${randomUUID()}`, name: tool.name,
@@ -109,7 +112,7 @@ export async function runCursorTurn(runtime: CursorRuntime, context: Context, op
     options.signal.throwIfAborted();
     pendingRun = agent.send(prompt, {
       onDelta: ({ update }) => {
-        if (accepting && !options.signal.aborted && calls.length === 0) options.onDelta(update);
+        if (capturing && !options.signal.aborted && calls.length === 0) options.onDelta(update);
       },
     });
     run = await abortable(pendingRun, options.signal);
@@ -130,7 +133,7 @@ export async function runCursorTurn(runtime: CursorRuntime, context: Context, op
   } catch (error) {
     failure = error;
   } finally {
-    accepting = false;
+    capturing = false;
     // If create/send resolves after an abort, its continuation still owns cleanup.
     // Do not delete its state directory before that continuation has finished.
     const cleanup = async () => {
@@ -148,7 +151,7 @@ export async function runCursorTurn(runtime: CursorRuntime, context: Context, op
       await rm(root, { recursive: true, force: true });
     };
     try {
-      await bounded(cleanup(), cleanupTimeout * 3, "Cursor cleanup");
+      await bounded(cleanup(), cleanupBudgetMs, "Cursor cleanup");
     } catch (error) {
       releaseTools();
       failure = failure ? new AggregateError([failure, error], "Cursor request and cleanup failed") : error;
