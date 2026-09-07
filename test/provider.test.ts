@@ -49,7 +49,7 @@ test("discovers models and explicit default parameters without hard-coded model 
   assert.deepEqual(fake.state.creates[0].model, { id: "model-from-account", params: [{ id: "thinking", value: "high" }] });
 });
 
-test("documented per-model windows replace 64k and delay Pi compaction to the correct threshold", async () => {
+test("documented per-model windows delay Pi compaction to the correct threshold", async () => {
   const windows: [string, number][] = [
     ["composer-2.5", 200_000], ["composer-2", 200_000],
     ["grok-4.5", 256_000], ["grok-4.6", 256_000],
@@ -60,6 +60,7 @@ test("documented per-model windows replace 64k and delay Pi compaction to the co
     ["gpt-5.6-sol", 272_000], ["gpt-5.6-sol-fast", 272_000],
     ["gpt-5.6-terra", 272_000], ["gpt-5.6-terra-fast", 272_000],
     ["gpt-5.6-luna", 272_000], ["gpt-5.6-luna-fast", 272_000],
+    ["kimi-k3", 200_000],
   ];
   const fake = fakeRuntime();
   fake.state.catalog = windows.map(([id]) => ({ id, displayName: id }));
@@ -76,7 +77,7 @@ test("documented per-model windows replace 64k and delay Pi compaction to the co
   }
 });
 
-test("context lookup uses exact catalog IDs then declared aliases, never guessed model families", async () => {
+test("context lookup uses exact catalog IDs then declared aliases, never guessed model families; unknown IDs get Cursor's 200k standard window", async () => {
   const fake = fakeRuntime();
   fake.state.catalog = [
     { id: "account-model", displayName: "Account Model", aliases: ["grok-4.6"] },
@@ -87,7 +88,7 @@ test("context lookup uses exact catalog IDs then declared aliases, never guessed
   ];
   const { provider } = createCursorProvider({ loadRuntime: async () => fake.runtime, env: () => undefined });
   await refresh(provider);
-  assert.deepEqual(provider.getModels().map((model) => model.contextWindow), [256_000, 200_000, 64_000, 64_000, 64_000]);
+  assert.deepEqual(provider.getModels().map((model) => model.contextWindow), [256_000, 200_000, 200_000, 200_000, 200_000]);
 });
 
 test("fast parameters retain the documented base model context window", async () => {

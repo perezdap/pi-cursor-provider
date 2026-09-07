@@ -55,7 +55,7 @@ This project has not been installed into global Pi settings. Loading it with `-e
 | R1 | Experimental compatibility test: the extension omits SDK `systemPrompt` to avoid its account access gate. Pi's instructions and bridge instructions are user-message content, not system-priority instructions. Cursor's own instructions can conflict with the restricted tool surface. Live instruction fidelity and tool handoff remain unverified. |
 | R2 | History replay is not a native message-array API. Historical roles are represented in JSON inside one SDK user message. Instruction fidelity, caching, and latency differ from a direct model provider. Full history is resent on every tool round. |
 | R3 | `npm audit --omit=dev` reports one high and two moderate dependency entries through `@cursor/sdk → @connectrpc/connect-node → undici@5.29.0`. npm reports no fix for this dependency chain. No untested cross-major override was applied. This is an audit result, not proof of exploitability in this adapter. |
-| R4 | Cursor's model catalog does not report token limits or prices. Known models use Cursor's documented standard context windows below. Unrecognized models retain a **64,000-token unverified fallback**. The 8,192 output-token default is still a Pi budgeting placeholder. Zero displayed cost means unknown, not free. Missing usage remains zero. Use Cursor's usage dashboard for billing. |
+| R4 | Cursor's model catalog does not report token limits or prices. Known models use Cursor's documented standard context windows below. Unrecognized models use Cursor's **200,000-token standard working window**, which is unverified per model. The 8,192 output-token default is still a Pi budgeting placeholder. Zero displayed cost means unknown, not free. Missing usage remains zero. Use Cursor's usage dashboard for billing. |
 | R5 | Input is text-only. Image attachments and image tool results fail explicitly. Thinking signatures and failed partial assistant responses are omitted from replay. Temperature, reasoning budgets, and output-token limits are not forwarded because this SDK surface does not expose equivalent controls. |
 | R6 | Tool restrictions are SDK configuration, not an OS sandbox. The SDK runs inside Pi's process with the user's permissions. If the SDK hangs, cleanup waits are bounded but cannot forcibly terminate an in-process library. Temporary `pi-cursor-*` directories can remain after cleanup errors or process crashes and can contain conversation data. |
 
@@ -63,7 +63,7 @@ No network proxy, unofficial endpoint, account-token extraction, or subscription
 
 ### Context windows
 
-Standard context windows from Cursor's model pages, checked **2026-09-06**:
+Standard (non-Max) context windows from Cursor's model pages and staff statements, checked **2026-09-07**:
 
 | Model IDs | Context tokens | Source |
 | --- | --- | --- |
@@ -74,8 +74,11 @@ Standard context windows from Cursor's model pages, checked **2026-09-06**:
 | `claude-fable-5`, `claude-fable-5-1` | 300,000 | [Fable 5](https://cursor.com/docs/models/claude-fable-5), [Fable 5.1](https://cursor.com/docs/models/claude-fable-5-1) |
 | `gemini-3.1-pro`, `gemini-3.6-flash`, `gemini-3.8-flash` | 200,000 | [3.1 Pro](https://cursor.com/docs/models/gemini-3-1-pro), [3.6 Flash](https://cursor.com/docs/models/gemini-3-6-flash), [3.8 Flash](https://cursor.com/docs/models/gemini-3-8-flash) |
 | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` and their `-fast` IDs | 272,000 | [Sol](https://cursor.com/docs/models/gpt-5-6-sol), [Terra](https://cursor.com/docs/models/gpt-5-6-terra), [Luna](https://cursor.com/docs/models/gpt-5-6-luna) |
+| `kimi-k3` | 200,000 | [Cursor staff, forum, 2026-09-02](https://forum.cursor.com/t/kimi-k3-sometimes-starts-up-with-a-window-of-200k-tokens/170325): no Context option on usage-based pricing, standard 200K working window. "Max" is the reasoning level. |
 
-The legacy `composer-2` ID also uses 200,000 because [Cursor redirects it to Composer 2.5](https://cursor.com/docs/sdk/typescript). Lookup uses the exact catalog ID first, then declared catalog aliases. Unknown versions are not inferred from similar model names. Fast parameters retain the base model's standard budget.
+The legacy `composer-2` ID also uses 200,000 because [Cursor redirects it to Composer 2.5](https://cursor.com/docs/sdk/typescript). Lookup uses the exact catalog ID first, then declared catalog aliases. Unknown IDs get the 200,000-token standard window; they are not inferred from similar model names. Fast parameters retain the base model's standard budget.
+
+The SDK catalog carries no token limits. Public model catalogs (models.dev and similar) report upstream vendor limits, for example 1,048,576 for `kimi-k3`, 1,000,000 for `claude-sonnet-5`, 500,000 for `grok-4.5`. Cursor does not serve those windows on standard plans, so the extension does not consult them. A too-large budget would stop Pi compaction while Cursor summarizes internally.
 
 These are local Pi budgets, not SDK-enforced limits. The bridge does not assume extended/Max context is enabled or opt into it. The SDK's built-in prompt, tool definitions, and JSON replay also consume context. Cursor may compact internally before Pi does.
 
@@ -89,7 +92,7 @@ These environment variables must be positive integers. Set them before launching
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PI_CURSOR_CONTEXT_WINDOW` | Per-model table above, otherwise `64000` | Override the Pi context budget for **all** Cursor models. Leave unset for per-model defaults. |
+| `PI_CURSOR_CONTEXT_WINDOW` | Per-model table above, otherwise `200000` | Override the Pi context budget for **all** Cursor models. Leave unset for per-model defaults. |
 | `PI_CURSOR_MAX_TOKENS` | `8192` | Pi output-budget placeholder, strictly below the context window. Does not cap Cursor output. |
 | `PI_CURSOR_TIMEOUT_MS` | `300000` | Completion deadline in milliseconds, followed by bounded cleanup. |
 

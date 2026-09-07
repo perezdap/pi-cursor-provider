@@ -7,8 +7,10 @@ import { createCursorStreams, safeError } from "./stream.ts";
 export const PROVIDER_ID = "cursor";
 export const API_ID = "cursor-sdk";
 
-// Cursor's documented standard context windows, checked 2026-09-06.
+// Cursor's standard (non-Max) context windows, checked 2026-09-07.
 // Sources: README.md#context-windows. Do not assume extended/Max context is enabled.
+// The SDK catalog carries no token limits, and public catalogs such as models.dev report
+// upstream vendor limits (e.g. kimi-k3 at 1M) that Cursor does not serve. Do not use them.
 const CONTEXT_WINDOWS = new Map<string, number>([
   ["composer-2.5", 200_000],
   ["composer-2", 200_000], // Cursor redirects this legacy ID to Composer 2.5.
@@ -28,14 +30,19 @@ const CONTEXT_WINDOWS = new Map<string, number>([
   ["gpt-5.6-terra-fast", 272_000],
   ["gpt-5.6-luna", 272_000],
   ["gpt-5.6-luna-fast", 272_000],
+  ["kimi-k3", 200_000], // Cursor staff: standard 200K working window, no Context option (forum, 2026-09-02).
 ]);
+
+// Cursor's standard working window for third-party models without a Context option.
+// Every catalog model above is at least this size.
+const STANDARD_CONTEXT_WINDOW = 200_000;
 
 function defaultContextWindow(model: SDKModel): number {
   for (const id of [model.id, ...(model.aliases ?? [])]) {
     const limit = CONTEXT_WINDOWS.get(id);
     if (limit !== undefined) return limit;
   }
-  return 64_000; // Unknown models retain the conservative, unverified fallback.
+  return STANDARD_CONTEXT_WINDOW;
 }
 
 export function defaultSelection(model: SDKModel): ModelSelection {
@@ -65,7 +72,7 @@ export function createCursorProvider(dependencies?: {
     return value;
   };
   const contextWindowOverride = env("PI_CURSOR_CONTEXT_WINDOW") === undefined
-    ? undefined : integer("PI_CURSOR_CONTEXT_WINDOW", 64_000);
+    ? undefined : integer("PI_CURSOR_CONTEXT_WINDOW", STANDARD_CONTEXT_WINDOW);
   const maxTokens = integer("PI_CURSOR_MAX_TOKENS", 8_192);
   if (contextWindowOverride !== undefined && maxTokens >= contextWindowOverride) {
     throw new Error("PI_CURSOR_MAX_TOKENS must be below PI_CURSOR_CONTEXT_WINDOW");
