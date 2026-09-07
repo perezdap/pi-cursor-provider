@@ -15,9 +15,6 @@ function errorText(error: unknown): string {
 export function safeError(error: unknown, apiKey?: string): string {
   let message = errorText(error);
   if (apiKey) message = message.replaceAll(apiKey, "[redacted]");
-  if (/--system-prompt|system.?prompt.*(?:access|allowed|enabled|permission)/i.test(message)) {
-    return `Cursor rejected Pi's system prompt. This account needs Cursor SDK system-prompt access. No fallback to Cursor's own prompt was attempted. ${message}`;
-  }
   return message;
 }
 

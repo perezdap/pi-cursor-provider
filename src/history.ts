@@ -42,5 +42,10 @@ export function serializeHistory(context: Context): string {
         }];
     }
   });
-  return JSON.stringify({ format: "pi-conversation-v1", messages });
+  return JSON.stringify({
+    format: "pi-conversation-v1",
+    piInstructions: context.systemPrompt ?? "",
+    bridgeInstructions: BRIDGE_INSTRUCTIONS,
+    messages,
+  });
 }

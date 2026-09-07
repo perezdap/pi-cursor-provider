@@ -32,7 +32,7 @@ export default function cursorProviderExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", close);
   pi.on("model_select", (event, ctx) => {
     if (event.model.provider === PROVIDER_ID && ctx.hasUI) {
-      ctx.ui.notify("Experimental Cursor bridge: text-only history replay, account-gated system prompt, unknown prices and token limits. See README.md.", "warning");
+      ctx.ui.notify(`Experimental Cursor bridge: text-only history replay, Pi instructions in user text. Context budget: ${event.model.contextWindow} tokens (documented default, fallback, or override). Prices and output limits remain unknown. See README.md.`, "warning");
     }
   });
 }

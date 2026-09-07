@@ -7,6 +7,37 @@ import { createCursorStreams, safeError } from "./stream.ts";
 export const PROVIDER_ID = "cursor";
 export const API_ID = "cursor-sdk";
 
+// Cursor's documented standard context windows, checked 2026-09-06.
+// Sources: README.md#context-windows. Do not assume extended/Max context is enabled.
+const CONTEXT_WINDOWS = new Map<string, number>([
+  ["composer-2.5", 200_000],
+  ["composer-2", 200_000], // Cursor redirects this legacy ID to Composer 2.5.
+  ["grok-4.5", 256_000],
+  ["grok-4.6", 256_000],
+  ["claude-sonnet-5", 200_000],
+  ["claude-opus-5", 300_000],
+  ["claude-opus-5-fast", 300_000],
+  ["claude-fable-5", 300_000],
+  ["claude-fable-5-1", 300_000],
+  ["gemini-3.1-pro", 200_000],
+  ["gemini-3.6-flash", 200_000],
+  ["gemini-3.8-flash", 200_000],
+  ["gpt-5.6-sol", 272_000],
+  ["gpt-5.6-sol-fast", 272_000],
+  ["gpt-5.6-terra", 272_000],
+  ["gpt-5.6-terra-fast", 272_000],
+  ["gpt-5.6-luna", 272_000],
+  ["gpt-5.6-luna-fast", 272_000],
+]);
+
+function defaultContextWindow(model: SDKModel): number {
+  for (const id of [model.id, ...(model.aliases ?? [])]) {
+    const limit = CONTEXT_WINDOWS.get(id);
+    if (limit !== undefined) return limit;
+  }
+  return 64_000; // Unknown models retain the conservative, unverified fallback.
+}
+
 export function defaultSelection(model: SDKModel): ModelSelection {
   const preset = model.variants?.find((variant) => variant.isDefault);
   const params = (model.parameters ?? []).map((parameter) => {
@@ -33,9 +64,12 @@ export function createCursorProvider(dependencies?: {
     }
     return value;
   };
-  const contextWindow = integer("PI_CURSOR_CONTEXT_WINDOW", 64_000);
+  const contextWindowOverride = env("PI_CURSOR_CONTEXT_WINDOW") === undefined
+    ? undefined : integer("PI_CURSOR_CONTEXT_WINDOW", 64_000);
   const maxTokens = integer("PI_CURSOR_MAX_TOKENS", 8_192);
-  if (maxTokens >= contextWindow) throw new Error("PI_CURSOR_MAX_TOKENS must be below PI_CURSOR_CONTEXT_WINDOW");
+  if (contextWindowOverride !== undefined && maxTokens >= contextWindowOverride) {
+    throw new Error("PI_CURSOR_MAX_TOKENS must be below PI_CURSOR_CONTEXT_WINDOW");
+  }
   let runtime: Promise<CursorRuntime> | undefined;
   const loadRuntime = () => runtime ??= (dependencies?.loadRuntime ?? loadCursorRuntime)().catch((error) => {
     runtime = undefined;
@@ -85,6 +119,10 @@ export function createCursorProvider(dependencies?: {
         const nextModels = catalog.map((item): Model<typeof API_ID> => {
           if (!item.id || nextSelections.has(item.id)) throw new Error("Cursor returned an invalid or duplicate model ID");
           nextSelections.set(item.id, defaultSelection(item));
+          const contextWindow = contextWindowOverride ?? defaultContextWindow(item);
+          if (maxTokens >= contextWindow) {
+            throw new Error(`PI_CURSOR_MAX_TOKENS must be below the context window for ${item.id} (${contextWindow})`);
+          }
           return {
             id: item.id, name: item.displayName || item.id, provider: PROVIDER_ID, api: API_ID,
             baseUrl: "https://api.cursor.com", reasoning: false, input: ["text"],

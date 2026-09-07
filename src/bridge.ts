@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InteractionUpdate, ModelSelection, SDKCustomTool, SDKCustomToolResult, TokenUsage } from "@cursor/sdk";
 import type { Context, ToolCall } from "@earendil-works/pi-ai";
-import { BRIDGE_INSTRUCTIONS, serializeHistory } from "./history.ts";
+import { serializeHistory } from "./history.ts";
 import type { CursorAgent, CursorRun, CursorRuntime } from "./sdk.ts";
 
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -96,7 +96,6 @@ export async function runCursorTurn(runtime: CursorRuntime, context: Context, op
     pendingAgent = runtime.create({
       apiKey: options.apiKey,
       model: options.model,
-      systemPrompt: `${context.systemPrompt ?? ""}\n\n${BRIDGE_INSTRUCTIONS}`,
       tools: Object.keys(customTools).length ? ["mcp"] : [],
       mcpServers: {},
       agents: {},

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Context } from "@earendil-works/pi-ai";
 import { abortable } from "../src/bridge.ts";
-import { serializeHistory } from "../src/history.ts";
+import { BRIDGE_INSTRUCTIONS, serializeHistory } from "../src/history.ts";
 import { createCursorStreams, safeError } from "../src/stream.ts";
 import { assistant, context, deferred, fakeRuntime, model, usage } from "./fixtures.ts";
 
@@ -82,7 +82,11 @@ test("isolates Cursor settings, MCP servers, workspace and storage", async () =>
   assert.notEqual(options.local?.cwd, process.cwd());
   assert.match(options.local!.cwd!, /pi-cursor-/);
   assert.ok(options.local?.store);
-  assert.match(options.systemPrompt!, /Ask before destructive commands/);
+  assert.equal(Object.hasOwn(options, "systemPrompt"), false);
+  const prompt = JSON.parse(fake.state.prompts[0]);
+  assert.equal(prompt.piInstructions, context.systemPrompt);
+  assert.equal(prompt.bridgeInstructions, BRIDGE_INSTRUCTIONS);
+  assert.deepEqual(prompt.messages, JSON.parse(serializeHistory(context)).messages);
   assert.deepEqual(options.local?.customTools?.pi_0.inputSchema, context.tools![0].parameters);
   assertClean(fake);
 });
@@ -235,11 +239,11 @@ test("creation and send errors retain diagnostics and clean disposable directori
   }
 });
 
-test("server-side prompt gate is explicit and never retried with Cursor's default prompt", async () => {
+test("server errors are preserved and redacted without assuming an account gate", async () => {
   const fake = fakeRuntime(({ fail }) => fail(`InvalidArgument: --system-prompt not allowed ${requestOptions.apiKey}`));
   const { message } = await collect(streamFor(fake).stream(model, context, requestOptions));
   assert.equal(message.stopReason, "error");
-  assert.match(message.errorMessage!, /needs Cursor SDK system-prompt access/);
+  assert.equal(message.errorMessage, "InvalidArgument: --system-prompt not allowed [redacted]");
   assert.equal(message.errorMessage!.includes(requestOptions.apiKey), false);
   assert.equal(fake.state.creates.length, 1);
   assertClean(fake);

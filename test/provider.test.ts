@@ -6,6 +6,7 @@ import { createModels, hasApi } from "@earendil-works/pi-ai";
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { fileURLToPath } from "node:url";
 import { loadExtensions } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
+import { DEFAULT_COMPACTION_SETTINGS, shouldCompact } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js";
 import { createCursorProvider, defaultSelection } from "../src/provider.ts";
 import { loadCursorRuntime } from "../src/sdk.ts";
 import { context, deferred, fakeRuntime, tool } from "./fixtures.ts";
@@ -46,6 +47,62 @@ test("discovers models and explicit default parameters without hard-coded model 
   const message = await provider.streamSimple(model, context, { apiKey: "fake-key" }).result();
   assert.equal(message.stopReason, "stop");
   assert.deepEqual(fake.state.creates[0].model, { id: "model-from-account", params: [{ id: "thinking", value: "high" }] });
+});
+
+test("documented per-model windows replace 64k and delay Pi compaction to the correct threshold", async () => {
+  const windows: [string, number][] = [
+    ["composer-2.5", 200_000], ["composer-2", 200_000],
+    ["grok-4.5", 256_000], ["grok-4.6", 256_000],
+    ["claude-sonnet-5", 200_000],
+    ["claude-opus-5", 300_000], ["claude-opus-5-fast", 300_000],
+    ["claude-fable-5", 300_000], ["claude-fable-5-1", 300_000],
+    ["gemini-3.1-pro", 200_000], ["gemini-3.6-flash", 200_000], ["gemini-3.8-flash", 200_000],
+    ["gpt-5.6-sol", 272_000], ["gpt-5.6-sol-fast", 272_000],
+    ["gpt-5.6-terra", 272_000], ["gpt-5.6-terra-fast", 272_000],
+    ["gpt-5.6-luna", 272_000], ["gpt-5.6-luna-fast", 272_000],
+  ];
+  const fake = fakeRuntime();
+  fake.state.catalog = windows.map(([id]) => ({ id, displayName: id }));
+  const { provider } = createCursorProvider({ loadRuntime: async () => fake.runtime, env: () => undefined });
+  await refresh(provider);
+  assert.deepEqual(provider.getModels().map((model) => [model.id, model.contextWindow]), windows);
+  assert.equal(shouldCompact(50_000, 64_000, DEFAULT_COMPACTION_SETTINGS), true);
+  for (const model of provider.getModels()) {
+    assert.equal(model.maxTokens, 8_192);
+    assert.equal(shouldCompact(50_000, model.contextWindow, DEFAULT_COMPACTION_SETTINGS), false, model.id);
+    const threshold = model.contextWindow - DEFAULT_COMPACTION_SETTINGS.reserveTokens;
+    assert.equal(shouldCompact(threshold, model.contextWindow, DEFAULT_COMPACTION_SETTINGS), false, model.id);
+    assert.equal(shouldCompact(threshold + 1, model.contextWindow, DEFAULT_COMPACTION_SETTINGS), true, model.id);
+  }
+});
+
+test("context lookup uses exact catalog IDs then declared aliases, never guessed model families", async () => {
+  const fake = fakeRuntime();
+  fake.state.catalog = [
+    { id: "account-model", displayName: "Account Model", aliases: ["grok-4.6"] },
+    { id: "composer-2.5", displayName: "Composer", aliases: ["grok-4.6"] },
+    { id: "grok-4.6-next", displayName: "Grok 4.6" },
+    { id: "unknown", displayName: "Unknown" },
+    { id: "__proto__", displayName: "Unknown" },
+  ];
+  const { provider } = createCursorProvider({ loadRuntime: async () => fake.runtime, env: () => undefined });
+  await refresh(provider);
+  assert.deepEqual(provider.getModels().map((model) => model.contextWindow), [256_000, 200_000, 64_000, 64_000, 64_000]);
+});
+
+test("fast parameters retain the documented base model context window", async () => {
+  const fake = fakeRuntime();
+  fake.state.catalog = [{
+    id: "composer-2.5", displayName: "Composer 2.5",
+    parameters: [{ id: "fast", values: [{ value: "false" }, { value: "true" }] }],
+    variants: [{ displayName: "Fast", isDefault: true, params: [{ id: "fast", value: "true" }] }],
+  }];
+  const { provider } = createCursorProvider({ loadRuntime: async () => fake.runtime, env: () => undefined });
+  await refresh(provider);
+  const [model] = provider.getModels();
+  assert.equal(model.contextWindow, 200_000);
+  await provider.streamSimple(model, context, { apiKey: "fake-key" }).result();
+  assert.deepEqual(fake.state.creates[0].model, { id: "composer-2.5", params: [{ id: "fast", value: "true" }] });
 });
 
 test("defaultSelection uses valid defaults and rejects invalid catalogs", () => {
@@ -119,16 +176,42 @@ test("duplicate model IDs do not replace a working catalog", async () => {
 });
 
 test("validates local budget settings without claiming SDK token-limit enforcement", async () => {
-  assert.throws(() => createCursorProvider({ env: () => "garbage" }), /positive integer/);
-  assert.throws(() => createCursorProvider({ env: () => "-1" }), /positive integer/);
+  for (const value of ["garbage", "-1", "0", "", "1.5", "Infinity", "2147483648"]) {
+    assert.throws(() => createCursorProvider({ env: () => value }), /positive integer/);
+  }
   assert.throws(() => createCursorProvider({ env: () => "100" }), /must be below/);
   const fake = fakeRuntime();
+  fake.state.catalog = [
+    { id: "composer-2.5", displayName: "Composer" },
+    { id: "grok-4.6", displayName: "Grok" },
+    { id: "unknown", displayName: "Unknown" },
+  ];
   const { provider } = createCursorProvider({
     loadRuntime: async () => fake.runtime,
     env: (name) => name === "PI_CURSOR_CONTEXT_WINDOW" ? "32000" : undefined,
   });
   await refresh(provider);
-  assert.equal(provider.getModels()[0].contextWindow, 32000);
+  assert.deepEqual(provider.getModels().map((model) => model.contextWindow), [32_000, 32_000, 32_000]);
+});
+
+test("output budgets must fit each resolved window and invalid refreshes retain the catalog", async () => {
+  const fake = fakeRuntime();
+  fake.state.catalog = [{ id: "grok-4.6", displayName: "Grok" }];
+  const { provider } = createCursorProvider({
+    loadRuntime: async () => fake.runtime,
+    env: (name) => name === "PI_CURSOR_MAX_TOKENS" ? "200000" : undefined,
+  });
+  await refresh(provider);
+  const initial = provider.getModels();
+  assert.equal(initial[0].maxTokens, 200_000);
+  for (const item of [
+    { id: "composer-2.5", displayName: "Composer" },
+    { id: "unknown", displayName: "Unknown" },
+  ]) {
+    fake.state.catalog = [item];
+    await assert.rejects(refresh(provider), /PI_CURSOR_MAX_TOKENS must be below the context window/);
+    assert.equal(provider.getModels(), initial);
+  }
 });
 
 test("the real Pi extension loader registers the provider and command without inference", async () => {
@@ -192,6 +275,7 @@ for (const mode of ["allow", "deny", "invalid-arguments"] as const) {
 
 test("native Pi model runtime resolves auth, discovers the provider and streams", async () => {
   const fake = fakeRuntime();
+  fake.state.catalog = [{ id: "composer-2.5", displayName: "Composer 2.5" }];
   const { provider, close } = createCursorProvider({ loadRuntime: async () => fake.runtime, env: () => undefined });
   const models = createModels({
     credentials: {
@@ -207,6 +291,7 @@ test("native Pi model runtime resolves auth, discovers the provider and streams"
   assert.equal(refreshed.errors.size, 0);
   const available = await models.getAvailable("cursor");
   assert.equal(available.length, 1);
+  assert.equal(available[0].contextWindow, 200_000);
   const result = await models.completeSimple(available[0], context);
   assert.equal(result.stopReason, "stop");
   assert.equal(fake.state.creates[0].apiKey, "fake-key");
